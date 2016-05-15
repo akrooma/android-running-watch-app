@@ -1,21 +1,71 @@
 package com.example.kristjan.runningwatchapp;
 
+import android.Manifest;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.location.Criteria;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Bundle;
+import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.TextView;
+import android.widget.Toast;
 
+import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.Polyline;
+import com.google.android.gms.maps.model.PolylineOptions;
 
-public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
+import java.text.DecimalFormat;
+import java.util.List;
+
+public class MainActivity extends AppCompatActivity implements OnMapReadyCallback, LocationListener {
     private final static String TAG = "MainActivity";
+    DecimalFormat decimalFormat;
+
     private GoogleMap mGoogleMap;
     private Menu mOptionsMenu;
+
+    private LocationManager locationManager;
+    private String provider;
+
+    private Location startLocation;
+    private Location wayPoint;
+    private Location resetLocation;
+    private Location locationPrevious;
+
+    private int markerCount = 0;
+    private double totalDistance = 0;
+    //private double totalLineDistance = 0;
+    private double wayPointDistance = 0;
+    private double wayPointLineDistance = 0;
+    private double cresetDistance = 0;
+    private double cresetLineDistance = 0;
+
+    private Polyline mPolyline;
+    private PolylineOptions mPolylineOptions;
+
+    private TextView textViewWPCount;
+    private TextView textViewSpeed;
+    private TextView textViewTotalDistance;
+    private TextView textViewCResetDistance;
+    private TextView textViewTotalLine;
+    private TextView textViewCResetLine;
+    private TextView textViewWpDistance;
+    private TextView textViewWpLine;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -26,6 +76,34 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.gmap);
         mapFragment.getMapAsync(this);
+
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        Criteria criteria = new Criteria();
+        // get the location provider (GPS/CEL-towers, WIFI)
+        provider = locationManager.getBestProvider(criteria, false);
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "No COARSE location permissions!");
+        }
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "No FINE location permissions!");
+        }
+
+        locationPrevious = startLocation = locationManager.getLastKnownLocation(provider);
+        wayPoint = null;
+        resetLocation = null;
+
+        textViewWPCount = (TextView) findViewById(R.id.textview_wpcount);
+        textViewSpeed= (TextView) findViewById(R.id.textview_speed);
+        textViewTotalDistance = (TextView) findViewById(R.id.textview_total_distance);
+        textViewTotalLine = (TextView) findViewById(R.id.textview_total_line);
+        textViewCResetDistance = (TextView) findViewById(R.id.textview_creset_distance);
+        textViewCResetLine = (TextView) findViewById(R.id.textview_creset_line);
+        textViewWpDistance = (TextView) findViewById(R.id.textview_wp_distance);
+        textViewWpLine = (TextView) findViewById(R.id.textview_wp_line);
+
+        decimalFormat = new DecimalFormat("#.##");
     }
 
     @Override
@@ -39,6 +117,20 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
+            case R.id.menu_mylocation:
+                item.setChecked(!item.isChecked());
+                updateMyLocation();
+                return true;
+
+            case R.id.menu_trackposition:
+                item.setChecked(!item.isChecked());
+                updateTrackPosition();
+                return true;
+
+            case R.id.menu_keepmapcentered:
+                item.setChecked(!item.isChecked());
+                return true;
+
             case R.id.menu_maptype_hybrid:
             case R.id.menu_maptype_none:
             case R.id.menu_maptype_normal:
@@ -49,9 +141,102 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 changeMapType();
                 return true;
 
+            case R.id.menu_map_zoom_10:
+            case R.id.menu_map_zoom_15:
+            case R.id.menu_map_zoom_20:
+            case R.id.menu_map_zoom_in:
+            case R.id.menu_map_zoom_out:
+            case R.id.menu_map_zoom_fittrack:
+                updateMapZoomLevel(item.getItemId());
+                return true;
+
             default:
                 return super.onOptionsItemSelected(item);
         }
+    }
+
+    private void updateMyLocation() {
+        if (mOptionsMenu.findItem(R.id.menu_mylocation).isChecked()) {
+            mGoogleMap.setMyLocationEnabled(true);
+
+            return;
+        }
+
+        mGoogleMap.setMyLocationEnabled(false);
+    }
+
+    private void updateTrackPosition(){
+        if (!checkReady()) {
+            return;
+        }
+
+        if (mOptionsMenu.findItem(R.id.menu_trackposition).isChecked()) {
+            mPolylineOptions = new PolylineOptions().width(5).color(Color.RED);
+            mPolyline = mGoogleMap.addPolyline(mPolylineOptions);
+        }
+    }
+
+    private void updateMapZoomLevel(int itemId){
+        if (!checkReady()) {
+            return;
+        }
+
+        switch (itemId) {
+            case R.id.menu_map_zoom_10:
+                mGoogleMap.moveCamera(CameraUpdateFactory.zoomTo(10));
+                break;
+
+            case R.id.menu_map_zoom_15:
+                mGoogleMap.moveCamera(CameraUpdateFactory.zoomTo(15));
+                break;
+
+            case R.id.menu_map_zoom_20:
+                mGoogleMap.moveCamera(CameraUpdateFactory.zoomTo(20));
+                break;
+
+            case R.id.menu_map_zoom_in:
+                mGoogleMap.moveCamera(CameraUpdateFactory.zoomIn());
+                break;
+
+            case R.id.menu_map_zoom_out:
+                mGoogleMap.moveCamera(CameraUpdateFactory.zoomOut());
+                break;
+
+            case R.id.menu_map_zoom_fittrack:
+                updateMapZoomFitTrack();
+                break;
+        }
+    }
+
+    private void updateMapZoomFitTrack(){
+        if (mPolyline==null){
+            return;
+        }
+
+        List<LatLng> points = mPolyline.getPoints();
+
+        if (points.size() <= 1){
+            return;
+        }
+
+        LatLngBounds.Builder builder = new LatLngBounds.Builder();
+
+        for (LatLng point : points) {
+            builder.include(point);
+        }
+
+        LatLngBounds bounds = builder.build();
+        int padding = 0; // offset from edges of the map in pixels
+        mGoogleMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding));
+    }
+
+    private boolean checkReady() {
+        if (mGoogleMap == null) {
+            Toast.makeText(this, R.string.map_not_ready, Toast.LENGTH_SHORT).show();
+
+            return false;
+        }
+        return true;
     }
 
     private void changeMapType(){
@@ -77,8 +262,138 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         //Log.d(TAG,"Map type changed!");
     }
 
+    public void buttonAddWayPointClicked(View view){
+        if (locationPrevious==null){
+            return;
+        }
+
+        wayPoint = locationPrevious;
+        wayPointDistance = wayPointLineDistance = 0;
+
+        markerCount++;
+
+        mGoogleMap.addMarker(new MarkerOptions().position(new LatLng(locationPrevious.getLatitude(), locationPrevious.getLongitude())).title(Integer.toString(markerCount)));
+
+        textViewWPCount.setText(Integer.toString(markerCount));
+    }
+
+    public void buttonCResetClicked(View view){
+        resetLocation = locationPrevious;
+        cresetDistance = cresetLineDistance = 0;
+    }
+
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mGoogleMap = googleMap;
+
+        // set zoom level to 15 - street
+        mGoogleMap.moveCamera(CameraUpdateFactory.zoomTo(17));
+
+        // if there was initial location received, move map to it
+        if (locationPrevious != null) {
+            mGoogleMap.moveCamera(CameraUpdateFactory.newLatLng(new LatLng(locationPrevious.getLatitude(), locationPrevious.getLongitude())));
+        }
+    }
+
+    @Override
+    protected void onResumeFragments() {
+        super.onResumeFragments();
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+        if (mGoogleMap == null) return;
+
+        LatLng newPoint = new LatLng(location.getLatitude(), location.getLongitude());
+
+        if (mOptionsMenu.findItem(R.id.menu_keepmapcentered).isChecked() || locationPrevious == null) {
+            mGoogleMap.moveCamera(CameraUpdateFactory.newLatLng(newPoint));
+        }
+
+        if (mOptionsMenu.findItem(R.id.menu_trackposition).isChecked()) {
+            List<LatLng> points = mPolyline.getPoints();
+            points.add(newPoint);
+            mPolyline.setPoints(points);
+        }
+
+        double distance = (double) locationPrevious.distanceTo(location) / 1000; // in kilometers
+
+        long timeBetweenLocations = (location.getTime() - locationPrevious.getTime()) / 1000; // in seconds
+        double secondsPerKM = timeBetweenLocations / distance;
+        int minutesOfSpeed = (int) secondsPerKM / 60;
+        int secondsOfSpeed = (int) secondsPerKM % 60;
+
+        String speed = minutesOfSpeed + ":" + secondsOfSpeed;
+        totalDistance += distance;
+        double totalLineDistance = (double) startLocation.distanceTo(location) / 1000;
+
+        if (wayPoint != null) {
+            wayPointDistance += distance;
+            wayPointLineDistance = (double) wayPoint.distanceTo(location) / 1000; // in kilometers
+
+            textViewWpDistance.setText(decimalFormat.format(wayPointDistance));
+            textViewWpLine.setText(decimalFormat.format(wayPointLineDistance));
+        }
+
+        if (resetLocation != null) {
+            cresetDistance += distance;
+            cresetLineDistance = (double) resetLocation.distanceTo(location) / 1000; // in kilometers
+
+            textViewCResetDistance.setText(decimalFormat.format(cresetDistance));
+            textViewCResetLine.setText(decimalFormat.format(cresetLineDistance));
+        }
+
+        textViewSpeed.setText(speed);
+        textViewTotalDistance.setText(decimalFormat.format(totalDistance));
+        textViewTotalLine.setText(decimalFormat.format(totalLineDistance));
+
+        locationPrevious = location;
+    }
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {
+
+    }
+
+    @Override
+    public void onProviderEnabled(String provider) {
+
+    }
+
+    @Override
+    public void onProviderDisabled(String provider) {
+
+    }
+
+    @Override
+    protected void onResume(){
+        super.onResume();
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "No COARSE location permissions!");
+        }
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "No FINE location permissions!");
+        }
+
+        if (locationManager!=null){
+            locationManager.requestLocationUpdates(provider, 500, 1, this);
+        }
+    }
+
+
+    @Override
+    protected void onPause(){
+        super.onPause();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "No COARSE location permissions!");
+        }
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "No FINE location permissions!");
+        }
+
+        if (locationManager!=null){
+            locationManager.removeUpdates(this);
+        }
     }
 }
