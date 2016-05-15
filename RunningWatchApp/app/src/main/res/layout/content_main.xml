@@ -12,5 +12,20 @@
     tools:context="com.example.kristjan.runningwatchapp.MainActivity"
     tools:showIn="@layout/activity_main">
 
+    <fragment
+        android:id="@+id/gmap"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        class="com.google.android.gms.maps.SupportMapFragment"
+        />
 
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="110dp"
+        android:layout_alignParentBottom="true"
+        android:background="#CCFFFFFF">
+
+
+
+    </RelativeLayout>
 </RelativeLayout>
