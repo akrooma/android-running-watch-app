@@ -1,7 +1,12 @@
 package com.example.kristjan.runningwatchapp;
 
 import android.Manifest;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.location.Criteria;
@@ -9,6 +14,7 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
@@ -16,8 +22,10 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.RemoteViews;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.support.v4.app.NotificationCompat;
 
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -67,6 +75,17 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private TextView textViewWpDistance;
     private TextView textViewWpLine;
 
+    private NotificationManager mNotificationManager;
+    private BroadcastReceiver mBroadcastReceiver;
+
+    RemoteViews remoteView;
+    NotificationCompat.Builder mBuilder;
+
+    /*
+    PowerManager.WakeLock wakeLock;
+    private boolean screenOff = false;
+    */
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -104,6 +123,101 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         textViewWpLine = (TextView) findViewById(R.id.textview_wp_line);
 
         decimalFormat = new DecimalFormat("#.##");
+
+        mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        mBroadcastReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent.getAction().equals("notification-broadcast-addwaypoint")){
+                    addNewWayPoint();
+                }
+                if (intent.getAction().equals("notification-broadcast-resettripmeter")){
+                    cResetApp();
+                }
+            }
+        };
+
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction("notification-broadcast-addwaypoint");
+        intentFilter.addAction("notification-broadcast-resettripmeter");
+        registerReceiver(mBroadcastReceiver, intentFilter);
+
+        initNotification();
+
+        /*
+        // ?????
+        PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
+                "MyWakelockTag");
+        wakeLock.acquire();
+
+
+        IntentFilter intentFilter = new IntentFilter(Intent.ACTION_SCREEN_ON);
+        intentFilter.addAction(Intent.ACTION_SCREEN_OFF);
+        registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent.getAction().equals(Intent.ACTION_SCREEN_OFF)) {
+                    screenOff = false;
+                    notifyScreen();
+
+                } else if (intent.getAction().equals(Intent.ACTION_SCREEN_ON)) {
+                    screenOff = true;
+                }
+            }
+        }, intentFilter);
+        */
+    }
+
+    private void initNotification() {
+        // get the view layout
+        remoteView = new RemoteViews(
+                getPackageName(), R.layout.custom_notification);
+
+        // define intents
+        PendingIntent pIntentAddWaypoint = PendingIntent.getBroadcast(
+                this,
+                0,
+                new Intent("notification-broadcast-addwaypoint"),
+                0
+        );
+
+        PendingIntent pIntentResetTripmeter = PendingIntent.getBroadcast(
+                this,
+                0,
+                new Intent("notification-broadcast-resettripmeter"),
+                0
+        );
+
+        // bring back already running activity
+        // in manifest set android:launchMode="singleTop"
+        PendingIntent pIntentOpenActivity = PendingIntent.getActivity(
+                this,
+                0,
+                new Intent(this, MainActivity.class),
+                PendingIntent.FLAG_UPDATE_CURRENT
+        );
+
+        // attach events
+        remoteView.setOnClickPendingIntent(R.id.buttonAddWayPoint, pIntentAddWaypoint);
+        remoteView.setOnClickPendingIntent(R.id.buttonResetTripmeter, pIntentResetTripmeter);
+        remoteView.setOnClickPendingIntent(R.id.buttonOpenActivity, pIntentOpenActivity);
+
+        // build notification
+        mBuilder =
+                new NotificationCompat.Builder(this)
+                        .setContent(remoteView)
+                        .setSmallIcon(R.drawable.ic_my_location_white_48dp);
+
+        // notify
+        mNotificationManager.notify(0, mBuilder.build());
+    }
+
+    public void updateNotification() {
+        if (mBuilder == null) return;
+        remoteView.setTextViewText(R.id.textViewTripmeterMetrics, decimalFormat.format(totalDistance));
+        remoteView.setTextViewText(R.id.textViewWayPointMetrics, decimalFormat.format(wayPointDistance));
+        mNotificationManager.notify(4, mBuilder.build());
     }
 
     @Override
@@ -263,12 +377,18 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
     public void buttonAddWayPointClicked(View view){
+        addNewWayPoint();
+    }
+
+    private void addNewWayPoint() {
         if (locationPrevious==null){
             return;
         }
 
         wayPoint = locationPrevious;
         wayPointDistance = wayPointLineDistance = 0;
+        textViewWpDistance.setText(decimalFormat.format(wayPointDistance));
+        textViewWpLine.setText(decimalFormat.format(wayPointLineDistance));
 
         markerCount++;
 
@@ -278,6 +398,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
     public void buttonCResetClicked(View view){
+        cResetApp();
+    }
+
+    private void cResetApp() {
         resetLocation = locationPrevious;
         cresetDistance = cresetLineDistance = 0;
     }
@@ -347,8 +471,12 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         textViewTotalDistance.setText(decimalFormat.format(totalDistance));
         textViewTotalLine.setText(decimalFormat.format(totalLineDistance));
 
+        updateNotification();
+
         locationPrevious = location;
     }
+
+
 
     @Override
     public void onStatusChanged(String provider, int status, Bundle extras) {
@@ -381,7 +509,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
     }
 
-
     @Override
     protected void onPause(){
         super.onPause();
@@ -396,4 +523,21 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             locationManager.removeUpdates(this);
         }
     }
+
+
+
+
+    /*
+    @Override
+    public void onBackPressed() {
+        moveTaskToBack(true);
+    }
+
+
+    @Override
+    protected void onDestroy() {
+        wakeLock.release();
+        super.onDestroy();
+    }
+    */
 }
